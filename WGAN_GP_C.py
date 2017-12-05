@@ -63,6 +63,7 @@ class discriminator(nn.Module):
             self.input_width = 64
             self.input_dim = 3
             self.output_dim = 1
+            self.class_num = 1
 
         self.conv = nn.Sequential(
             nn.Conv2d(self.input_dim, 64, 4, 2, 1),
@@ -80,10 +81,16 @@ class discriminator(nn.Module):
             nn.Linear(1024, self.output_dim),
             # nn.Sigmoid(),
         )
-        self.cl = nn.Sequential(
-            nn.Linear(1024, self.class_num),
-            nn.Softmax(),
-        )
+        if dataset == 'mnist' or dataset == 'fashion-mnist':
+            self.cl = nn.Sequential(
+                nn.Linear(1024, self.class_num),
+                nn.Softmax(),
+            )
+        elif dataset == 'celebA':
+            self.cl = nn.Sequential(
+                nn.Linear(1024, self.class_num),
+                nn.Sigmoid(),
+            )
         utils.initialize_weights(self)
 
     def forward(self, input):
@@ -110,7 +117,7 @@ class WGAN_GP_C(object):
         self.lambda_ = 0.25
         self.n_critic = 5               # the number of iterations of the critic per generator iteration
 
-        self.lambda_cl = 1
+        self.lambda_cl = 0.01
         self.c = 0.01
 
         # networks init
@@ -138,6 +145,8 @@ class WGAN_GP_C(object):
                                                          transform=transforms.Compose(
                                                              [transforms.ToTensor()])),
                                           batch_size=self.batch_size, shuffle=True)
+            self.z_dim = 62
+            self.y_dim = 10
         elif self.dataset == 'fashion-mnist':
             self.data_loader = DataLoader(
                 datasets.FashionMNIST('data/fashion-mnist', train=True, download=True, transform=transforms.Compose(
@@ -147,8 +156,11 @@ class WGAN_GP_C(object):
             self.data_loader = utils.load_celebA('data/celebA', transform=transforms.Compose(
                 [transforms.CenterCrop(160), transforms.Scale(64), transforms.ToTensor()]), batch_size=self.batch_size,
                                                  shuffle=True)
-        self.z_dim = 62
-        self.y_dim = 10
+            from load_attr import load_attr
+            attr = load_attr()
+            self.attr = torch.FloatTensor(attr)
+            self.z_dim = 62
+            self.y_dim = 10
 
         # fixed noise
         if self.gpu_mode:
@@ -156,16 +168,20 @@ class WGAN_GP_C(object):
         else:
             self.sample_z_ = Variable(torch.rand((self.batch_size, self.z_dim)), volatile=True)
 
-        temp = torch.zeros((10, 1))
-        for i in range(self.y_dim):
-            temp[i, 0] = i
+        if self.dataset == 'mnist':
+            temp = torch.zeros((10, 1))
+            for i in range(self.y_dim):
+                temp[i, 0] = i
 
-        temp_y = torch.zeros((self.sample_num, 1))
-        for i in range(10):
-            temp_y[i * self.y_dim: (i + 1) * self.y_dim] = temp
+            temp_y = torch.zeros((self.sample_num, 1))
+            for i in range(10):
+                temp_y[i * self.y_dim: (i + 1) * self.y_dim] = temp
 
-        self.sample_y_ = torch.zeros((self.sample_num, self.y_dim))
-        self.sample_y_.scatter_(1, temp_y.type(torch.LongTensor), 1)
+            self.sample_y_ = torch.zeros((self.sample_num, self.y_dim))
+            self.sample_y_.scatter_(1, temp_y.type(torch.LongTensor), 1)
+        elif self.dataset == 'celebA':
+            self.sample_y_ = torch.zeros((self.sample_num, 1))
+            self.sample_y_[:50] = 1
         if self.gpu_mode:
             self.sample_y_ = Variable(self.sample_y_.cuda(), volatile=True)
         else:
@@ -194,6 +210,10 @@ class WGAN_GP_C(object):
                 if iter == self.data_loader.dataset.__len__() // self.batch_size:
                     break
 
+                if self.dataset == 'celebA':
+                    y_ = self.attr[y_]
+                y_ = y_.view((self.batch_size, 1))
+
                 z_ = torch.rand((self.batch_size, self.z_dim))
 
                 if self.gpu_mode:
@@ -207,15 +227,22 @@ class WGAN_GP_C(object):
 
                 D_real, C_real = self.D(x_)
                 D_real_loss = -torch.mean(D_real)
-                C_real_loss = self.CE_loss(C_real, y_)
+                # C_real_loss = self.CE_loss(C_real, y_)
+                C_real_loss = self.BCE_loss(C_real, y_)
 
-                label = torch.zeros(self.batch_size, 10).cuda()
-                label = label.scatter_(1, y_.data.view(self.batch_size, 1), 1)
-                label = Variable(label)
+                if self.dataset == 'mnist':
+                    label = torch.zeros(self.batch_size, 10).cuda()
+                    label = label.scatter_(1, y_.data.view(self.batch_size, 1), 1)
+                    label = Variable(label)
+                elif self.dataset == 'celebA':
+                    label = torch.zeros(self.batch_size, 1).cuda()
+                    label[:50] = 1
+                    label = Variable(label)
                 G_ = self.G(z_, label)
                 D_fake, C_fake = self.D(G_)
                 D_fake_loss = torch.mean(D_fake)
-                C_fake_loss = self.CE_loss(C_fake, y_)
+                # C_fake_loss = self.CE_loss(C_fake, y_)
+                C_fake_loss = self.BCE_loss(C_fake, label)
 
                 # gradient penalty
                 if self.gpu_mode:
@@ -249,12 +276,18 @@ class WGAN_GP_C(object):
                     # update G network
                     self.G_optimizer.zero_grad()
 
-                    label = torch.zeros(self.batch_size, 10).cuda()
-                    label = label.scatter_(1, y_.data.view(self.batch_size, 1), 1)
-                    label = Variable(label)
+                    if self.dataset == 'mnist':
+                        label = torch.zeros(self.batch_size, 10).cuda()
+                        label = label.scatter_(1, y_.data.view(self.batch_size, 1), 1)
+                        label = Variable(label)
+                    elif self.dataset == 'celebA':
+                        label = torch.zeros(self.batch_size, 1).cuda()
+                        label[:50] = 1
+                        label = Variable(label)
                     G_ = self.G(z_, label)
                     D_fake, C_fake = self.D(G_)
-                    G_loss = -torch.mean(D_fake) + self.lambda_cl * self.CE_loss(C_fake, y_)
+                    # G_loss = -torch.mean(D_fake) + self.lambda_cl * self.CE_loss(C_fake, y_)
+                    G_loss = -torch.mean(D_fake) + self.lambda_cl * self.BCE_loss(C_fake, y_)
                     self.train_hist['G_loss'].append(G_loss.data[0])
 
                     G_loss.backward()
