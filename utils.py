@@ -5,6 +5,7 @@ import scipy.misc
 import imageio
 import matplotlib.pyplot as plt
 from torchvision import datasets, transforms
+from ImageFolderPath import ImageFolderPath
 
 def load_mnist(dataset):
     data_dir = os.path.join("./data", dataset)
@@ -61,6 +62,7 @@ def load_celebA(dir, transform, batch_size, shuffle):
 
     # data_dir = 'data/celebA'  # this path depends on your computer
     dset = datasets.ImageFolder(dir, transform)
+    # dset = ImageFolderPath(dir, transform)
     data_loader = torch.utils.data.DataLoader(dset, batch_size, shuffle)
 
     return data_loader
