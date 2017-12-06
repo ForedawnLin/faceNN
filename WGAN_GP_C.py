@@ -117,7 +117,7 @@ class WGAN_GP_C(object):
         self.lambda_ = 0.25
         self.n_critic = 5               # the number of iterations of the critic per generator iteration
 
-        self.lambda_cl = 0.01
+        self.lambda_cl = 0.2
         self.c = 0.01
 
         # networks init
@@ -160,7 +160,7 @@ class WGAN_GP_C(object):
             attr = load_attr()
             self.attr = torch.FloatTensor(attr)
             self.z_dim = 62
-            self.y_dim = 10
+            self.y_dim = 1
 
         # fixed noise
         if self.gpu_mode:
@@ -180,8 +180,9 @@ class WGAN_GP_C(object):
             self.sample_y_ = torch.zeros((self.sample_num, self.y_dim))
             self.sample_y_.scatter_(1, temp_y.type(torch.LongTensor), 1)
         elif self.dataset == 'celebA':
-            self.sample_y_ = torch.zeros((self.sample_num, 1))
-            self.sample_y_[:50] = 1
+            self.sample_y_ = torch.zeros((self.sample_num, self.y_dim))
+            self.sample_y_[:50, 0] = 1
+            # self.sample_y_[25:75, 1] = 1
         if self.gpu_mode:
             self.sample_y_ = Variable(self.sample_y_.cuda(), volatile=True)
         else:
@@ -212,7 +213,7 @@ class WGAN_GP_C(object):
 
                 if self.dataset == 'celebA':
                     y_ = self.attr[y_]
-                y_ = y_.view((self.batch_size, 1))
+                y_ = y_.view((self.batch_size, self.y_dim))
 
                 z_ = torch.rand((self.batch_size, self.z_dim))
 
@@ -235,8 +236,9 @@ class WGAN_GP_C(object):
                     label = label.scatter_(1, y_.data.view(self.batch_size, 1), 1)
                     label = Variable(label)
                 elif self.dataset == 'celebA':
-                    label = torch.zeros(self.batch_size, 1).cuda()
-                    label[:50] = 1
+                    label = torch.zeros(self.batch_size, self.y_dim).cuda()
+                    label[:50, 0] = 1
+                    # label[24:75, 1] = 1
                     label = Variable(label)
                 G_ = self.G(z_, label)
                 D_fake, C_fake = self.D(G_)
@@ -281,8 +283,9 @@ class WGAN_GP_C(object):
                         label = label.scatter_(1, y_.data.view(self.batch_size, 1), 1)
                         label = Variable(label)
                     elif self.dataset == 'celebA':
-                        label = torch.zeros(self.batch_size, 1).cuda()
-                        label[:50] = 1
+                        label = torch.zeros(self.batch_size, self.y_dim).cuda()
+                        label[:50, 0] = 1
+                        # label[24:75, 1] = 1
                         label = Variable(label)
                     G_ = self.G(z_, label)
                     D_fake, C_fake = self.D(G_)
